@@ -51,6 +51,7 @@ from .models import (
     Event,
     EventInterest,
     EventPost,
+    HostRating,
     Notification,
     Registration,
 )
@@ -61,6 +62,12 @@ from .notifications import (
     notify_interested,
     notify_registration_change,
     party,
+)
+from .ratings import (
+    host_rating_summary,
+    rating_block_reason,
+    rating_closes_at,
+    rating_window_open,
 )
 from .natural_search import MAX_PROMPT_LENGTH, describe_search, natural_search_url
 from .search import search_events
@@ -222,7 +229,7 @@ class MyEventsView(LoginRequiredMixin, TemplateView):
         context["archived_events"] = [
             event for event in reversed(events) if not event.is_open
         ]
-        context["registered_events"] = (
+        registrations = list(
             Registration.objects.filter(user=user)
             .select_related("event")
             .order_by(
@@ -231,6 +238,20 @@ class MyEventsView(LoginRequiredMixin, TemplateView):
                 "event__title",
             )
         )
+        stars_by_event = dict(
+            HostRating.objects.filter(rater=user).values_list("event_id", "stars")
+        )
+        can_rate_hosts = get_active_ban(user) is None
+        for registration in registrations:
+            event = registration.event
+            registration.my_stars = stars_by_event.get(event.pk)
+            registration.can_rate = (
+                can_rate_hosts
+                and event.host_id is not None
+                and event.host_id != user.pk
+                and rating_window_open(event)
+            )
+        context["registered_events"] = registrations
         return context
 
 
@@ -566,6 +587,8 @@ class EventDetailView(DetailView):
         if context["can_manage"]:
             context["recipient_count"] = interested_recipients(event).count()
 
+        self.add_host_rating_context(context, current_registration)
+
         # Find contact requests sent by the current user.
         request_by_recipient = {}
 
@@ -631,6 +654,36 @@ class EventDetailView(DetailView):
         )
 
         return context
+
+    def add_host_rating_context(self, context, current_registration):
+        """Add the host's rating summary and, for attendees, the rating card.
+
+        The card appears for anyone who registered once the event is over,
+        even after the rating window closes, so they can still see their own
+        rating; ``rating_block_reason`` decides whether the form is offered.
+        """
+        event = self.object
+        user = self.request.user
+        if event.host is None:
+            return
+        context["host_rating"] = host_rating_summary(event.host)
+        show_card = (
+            current_registration is not None
+            and event.host_id != user.pk
+            and event.has_ended
+            and not event.is_cancelled
+        )
+        context["show_rating_card"] = show_card
+        if not show_card:
+            return
+        context["my_rating"] = HostRating.objects.filter(
+            event=event, rater=user
+        ).first()
+        context["rating_closed_reason"] = rating_block_reason(event, user)
+        context["star_choices"] = range(HostRating.MAX_STARS, 0, -1)
+        context["comment_max_length"] = HostRating.COMMENT_MAX_LENGTH
+        closes_at = rating_closes_at(event)
+        context["rating_closes_at"] = closes_at
 
 
 class LandingView(TemplateView):

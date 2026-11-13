@@ -430,3 +430,56 @@ class EventReply(models.Model):
 
     def __str__(self):
         return f"Reply by {self.author} on post {self.post_id}"
+
+
+class HostRating(models.Model):
+    """One attendee's 1–5 star rating of the person who hosted an event.
+
+    The host is stored alongside the event so a host's average can be
+    computed without joining through every event they posted.
+    """
+
+    MIN_STARS = 1
+    MAX_STARS = 5
+    COMMENT_MAX_LENGTH = 300
+
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.CASCADE,
+        related_name="host_ratings",
+    )
+    host = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="host_ratings",
+    )
+    rater = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="given_host_ratings",
+    )
+    stars = models.PositiveSmallIntegerField(
+        "stars",
+        validators=[MinValueValidator(MIN_STARS), MaxValueValidator(MAX_STARS)],
+    )
+    comment = models.CharField(
+        "comment", max_length=COMMENT_MAX_LENGTH, blank=True, default=""
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event", "rater"],
+                name="unique_host_rating_per_event",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(stars__gte=1, stars__lte=5),
+                name="host_rating_stars_1_to_5",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.rater} rated {self.host} {self.stars}/5 for {self.event}"
