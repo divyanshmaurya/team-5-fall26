@@ -123,6 +123,17 @@ class Event(models.Model):
         return False
 
     @property
+    def rating_window_open(self):
+        """Return whether attendees can still rate this event's host.
+
+        Lets templates, such as the event card, ask the same question the
+        rating view does without calling a function.
+        """
+        from .ratings import rating_window_open
+
+        return self.host_id is not None and rating_window_open(self)
+
+    @property
     def is_open(self):
         """Return whether the event is upcoming or under way, not cancelled."""
         return self.status == self.Status.UPCOMING and not self.has_ended

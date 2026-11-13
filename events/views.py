@@ -79,6 +79,22 @@ ARCHIVED_EVENT_PREVIEW_LIMIT = 3
 ARCHIVED_EVENT_PAGE_SIZE = 20
 
 
+def annotate_for_viewer(queryset, user):
+    """Mark each event the viewer registered for or already rated the host of.
+
+    Event cards use these flags to choose their button: Cancel Registration
+    on upcoming events, and Rate on ended ones the viewer attended.
+    """
+    return queryset.annotate(
+        user_is_registered=Exists(
+            Registration.objects.filter(event_id=OuterRef("pk"), user=user)
+        ),
+        user_rated_host=Exists(
+            HostRating.objects.filter(event_id=OuterRef("pk"), rater=user)
+        ),
+    )
+
+
 class EventCreateView(LoginRequiredMixin, CreateView):
     """Let a signed-in user post an event that everyone can discover."""
 
@@ -703,42 +719,28 @@ class LandingView(TemplateView):
         context["archived_events"] = []
         if self.request.user.is_authenticated:
             # Upcoming events, soonest first.
-            context["events"] = (
-                Event.objects.filter(
-                    status=Event.Status.UPCOMING,
-                )
-                .annotate(
-                    user_is_registered=Exists(
-                        Registration.objects.filter(
-                            event_id=OuterRef("pk"),
-                            user=self.request.user,
-                        )
-                    )
-                )
-                .order_by(
-                    F("start_time").asc(nulls_last=True),
-                    "end_time",
-                    "title",
-                )[:UPCOMING_EVENT_LIMIT]
-            )
+            context["events"] = annotate_for_viewer(
+                Event.objects.filter(status=Event.Status.UPCOMING),
+                self.request.user,
+            ).order_by(
+                F("start_time").asc(nulls_last=True),
+                "end_time",
+                "title",
+            )[
+                :UPCOMING_EVENT_LIMIT
+            ]
 
             # Recently completed events, newest first.
-            context["archived_events"] = (
-                Event.objects.filter(status=Event.Status.DONE)
-                .annotate(
-                    user_is_registered=Exists(
-                        Registration.objects.filter(
-                            event_id=OuterRef("pk"),
-                            user=self.request.user,
-                        )
-                    )
-                )
-                .order_by(
-                    F("start_time").desc(nulls_last=True),
-                    "-end_time",
-                    "-title",
-                )[:ARCHIVED_EVENT_PREVIEW_LIMIT]
-            )
+            context["archived_events"] = annotate_for_viewer(
+                Event.objects.filter(status=Event.Status.DONE),
+                self.request.user,
+            ).order_by(
+                F("start_time").desc(nulls_last=True),
+                "-end_time",
+                "-title",
+            )[
+                :ARCHIVED_EVENT_PREVIEW_LIMIT
+            ]
 
         return context
 
@@ -773,14 +775,7 @@ class EventSearchMixin:
         events = filter_events(base_queryset, filters)
 
         if self.request.user.is_authenticated:
-            events = events.annotate(
-                user_is_registered=Exists(
-                    Registration.objects.filter(
-                        event_id=OuterRef("pk"),
-                        user=self.request.user,
-                    )
-                )
-            )
+            events = annotate_for_viewer(events, self.request.user)
 
         if self.query:
             return search_events(events, self.query)

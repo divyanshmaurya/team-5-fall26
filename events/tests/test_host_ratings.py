@@ -447,6 +447,48 @@ class MyEventsRatingTests(RatingTestCase):
         self.assertNotContains(self.client.get(reverse("my_events")), "Rate host")
 
 
+class EventCardRatingTests(RatingTestCase):
+    """Ended event cards say Rate, not Ended, to attendees who can rate."""
+
+    def setUp(self):
+        """Archive the event so it shows on the archived events page."""
+        Event.objects.filter(pk=self.event.pk).update(status=Event.Status.DONE)
+        self.rate_link = (
+            f'href="{reverse("event_detail", args=[self.event.pk])}#rate-host"'
+        )
+
+    def card_page(self, user):
+        """Return the archived events page as ``user`` sees it."""
+        self.client.force_login(user)
+        return self.client.get(reverse("archived_events"))
+
+    def test_attendee_sees_rate_button(self):
+        """An attendee who hasn't rated gets a Rate button to the event page."""
+        response = self.card_page(self.attendee)
+        self.assertContains(response, self.rate_link)
+        self.assertNotContains(response, "Ended")
+
+    def test_others_still_see_ended(self):
+        """Rated, non-attendee, host, and closed-window cards say Ended."""
+        for user in (self.stranger, self.host):
+            with self.subTest(user=user.username):
+                response = self.card_page(user)
+                self.assertNotContains(response, self.rate_link)
+                self.assertContains(response, "Ended")
+        self.rate(self.attendee, self.event, 5)
+        self.assertNotContains(self.card_page(self.attendee), self.rate_link)
+        HostRating.objects.all().delete()
+        Event.objects.filter(pk=self.event.pk).update(
+            end_time=timezone.now() - RATING_WINDOW - timedelta(days=1)
+        )
+        self.assertNotContains(self.card_page(self.attendee), self.rate_link)
+
+    def test_feed_events_have_no_rate_button(self):
+        """Events without a host on this site can't be rated."""
+        self.assertFalse(make_event(None, "card-feed").rating_window_open)
+        self.assertTrue(self.event.rating_window_open)
+
+
 class ProfileRatingTests(RatingTestCase):
     """Public profiles show a host's rating and the latest comments."""
 
