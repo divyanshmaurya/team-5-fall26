@@ -47,6 +47,7 @@ from .filters import (
     EventFilterForm,
     filter_events,
     filter_params,
+    nyc_today,
 )
 from .forms import (
     CancelEventForm,
@@ -70,6 +71,7 @@ from .notifications import (
     change_notice,
     interested_recipients,
     notify_interested,
+    notify_attendee_removed,
     notify_registration_change,
     party,
 )
@@ -526,6 +528,44 @@ def register_event(request, pk):
 
 @login_required
 @require_POST
+def remove_attendee(request, pk, registration_id):
+    """Let a host take a guest off the guest list of their upcoming event.
+
+    The guest's registration is deleted and they get a notification and an
+    email saying the host removed them. Only the event's host can do this,
+    and only until the event ends or is cancelled.
+    """
+    event = get_hosted_upcoming_event(request.user, pk)
+    manage_url = reverse("event_manage", args=[event.pk]) + "?tab=attendees"
+    with transaction.atomic():
+        registration = (
+            Registration.objects.select_for_update()
+            .select_related("user")
+            .filter(pk=registration_id, event=event)
+            .first()
+        )
+        if registration is None:
+            messages.info(request, "That guest is no longer registered.")
+            return redirect(manage_url)
+        guest = registration.user
+        registration.delete()
+        notify_attendee_removed(
+            event,
+            guest,
+            event_url=request.build_absolute_uri(
+                reverse("event_detail", args=[event.pk])
+            ),
+        )
+    messages.success(
+        request,
+        f"{guest.get_display_name()} was removed from the guest list "
+        "and has been notified.",
+    )
+    return redirect(manage_url)
+
+
+@login_required
+@require_POST
 def cancel_registration(request, pk):
     """Cancel the current user's registration for an event."""
     event = get_object_or_404(Event, pk=pk)
@@ -670,11 +710,6 @@ class EventDetailView(DetailView):
 
         context["registered_count"] = registrations.count()
 
-        # Only show attendees who have chosen to share their profiles.
-        context["registered_users"] = registrations.filter(
-            user__share_profile_with_attendees=True
-        )
-
         # Check whether the current user has registered.
         current_registration = (
             Registration.objects.filter(
@@ -686,6 +721,9 @@ class EventDetailView(DetailView):
         )
 
         context["user_is_registered"] = current_registration is not None
+        context["user_participates"] = (
+            current_interest is not None or current_registration is not None
+        )
         context["current_registration"] = current_registration
         context["party_size_choices"] = range(1, Registration.MAX_PARTY_SIZE + 1)
 
@@ -771,6 +809,18 @@ class EventDetailView(DetailView):
         ]
 
         context["attendees"] = attendees
+
+        # Registered attendees use the same contact controls as interested users.
+        registered_users = (
+            registrations.filter(user__share_profile_with_attendees=True)
+            .annotate(recipient_banned=Exists(active_bans))
+            .order_by("user__display_name", "user__username")
+        )
+        for registration in registered_users:
+            registration.contact_request = request_by_recipient.get(
+                registration.user_id
+            )
+        context["registered_users"] = registered_users
 
         # Discover only opted-in profiles for active, related events.
         context["can_explore_similar_interests"] = (
@@ -889,6 +939,10 @@ class LandingView(TemplateView):
         )
 
         context["events"] = []
+        # Search lists nothing without a filter, so "all upcoming" starts today.
+        context["all_upcoming_url"] = (
+            reverse("search") + "?" + urlencode({"date_from": nyc_today().isoformat()})
+        )
         context["archived_events"] = []
         context["recommendations"] = []
         context["has_search_history"] = False
