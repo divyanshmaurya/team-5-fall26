@@ -354,7 +354,8 @@ class CustomLoginView(LoginView):
                 if self._account_subject(pk) in self.locked_subjects
             }
             if locks and len(locks) == len(subjects):
-                self.lock_expiry_timestamp = max(locks.values())
+                # Reopen the form as soon as any matching account unlocks.
+                self.lock_expiry_timestamp = min(locks.values())
                 self.locked_identifier = raw_username
                 context = self.get_context_data()
                 context["form"] = self.get_form()
@@ -407,8 +408,9 @@ class CustomLoginView(LoginView):
         if not username_input:
             username_input = self.request.POST.get("username", "").strip()
 
-        current_attempts = 0
-        for subject in self._lock_subjects(username_input):
+        subjects = self._lock_subjects(username_input)
+        attempts_left = []
+        for subject in subjects:
             if subject in self.locked_subjects:
                 # Already locked and left out of the password check.
                 continue
@@ -421,17 +423,21 @@ class CustomLoginView(LoginView):
                     time.time() + LOCKOUT_DURATION_SECONDS,
                     LOCKOUT_DURATION_SECONDS,
                 )
-            current_attempts = max(current_attempts, attempts)
+            else:
+                attempts_left.append(LOCKOUT_THRESHOLD - attempts)
 
-        remaining_attempts = LOCKOUT_THRESHOLD - current_attempts
-
-        if current_attempts >= LOCKOUT_THRESHOLD:
-            self.lock_expiry_timestamp = time.time() + LOCKOUT_DURATION_SECONDS
+        # Lock the form only when no matching account can still log in, and
+        # reopen it as soon as the first of them can.
+        locks = self._active_locks(subjects)
+        if len(locks) == len(subjects):
+            self.lock_expiry_timestamp = min(locks.values())
             self.locked_identifier = username_input
             remaining_attempts = 0
         else:
             self.lock_expiry_timestamp = None
             self.locked_identifier = None
+            remaining_attempts = min(attempts_left, default=LOCKOUT_THRESHOLD)
+        current_attempts = LOCKOUT_THRESHOLD - remaining_attempts
 
         context = self.get_context_data(form=form)
         context["remaining_attempts"] = remaining_attempts

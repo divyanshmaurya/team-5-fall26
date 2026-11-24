@@ -1,5 +1,7 @@
 """The login lockout can't be dodged by retyping the account differently (#180)."""
 
+import time
+
 from django.conf import settings
 from django.contrib.auth import SESSION_KEY
 from django.core.cache import cache
@@ -180,6 +182,52 @@ class SharedIdentifierTests(TestCase):
 
         self.assertIsNone(self.logged_in_as())
         self.assertIsNotNone(response.context["lock_expiry"])
+
+    def lock_other(self):
+        """Lock the other account by failing with its own email."""
+        for _ in range(LOCKOUT_THRESHOLD):
+            self.client.post(
+                self.url, {"username": "other@example.com", "password": "wrong"}
+            )
+
+    def test_locked_username_owner_cant_log_in_through_another_backend(self):
+        """With the other account locked, its password doesn't log it in by its
+        username, even though Alice's email still matches the same text."""
+        self.lock_other()
+
+        response = self.post(OTHER_PASSWORD)
+
+        self.assertIsNone(self.logged_in_as())
+        self.assertEqual(response.status_code, 200)
+        self.post(PASSWORD)
+        self.assertEqual(self.logged_in_as(), str(self.alice.pk))
+
+    def test_one_account_reaching_the_limit_keeps_the_form_open(self):
+        """Locking one match doesn't start the countdown while another can log in."""
+        for _ in range(LOCKOUT_THRESHOLD - 1):
+            self.client.post(self.url, {"username": "alice", "password": "wrong"})
+
+        response = self.post("wrong")
+
+        self.assertIsNone(response.context["lock_expiry"])
+        self.assertEqual(response.context["remaining_attempts"], LOCKOUT_THRESHOLD - 1)
+        self.post(OTHER_PASSWORD)
+        self.assertEqual(self.logged_in_as(), str(self.other.pk))
+
+    def test_countdown_ends_when_the_first_account_unlocks(self):
+        """When every match is locked, the countdown uses the earliest expiry."""
+        view = CustomLoginView()
+        now = time.time()
+        for user, seconds in ((self.alice, 100), (self.other, 500)):
+            cache.set(
+                view._get_lock_expiry_key(view._account_subject(user.pk)),
+                now + seconds,
+                600,
+            )
+
+        response = self.post("wrong")
+
+        self.assertAlmostEqual(response.context["lock_expiry"], now + 100, delta=5)
 
 
 class UnsupportedInputTests(TestCase):
