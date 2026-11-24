@@ -251,6 +251,30 @@ class CustomLoginView(LoginView):
         super().__init__(*args, **kwargs)
         self.lock_expiry_timestamp = None
         self.locked_identifier = None
+        self.locked_subjects = set()
+
+    @staticmethod
+    def _account_subject(user_pk) -> str:
+        """Return the subject failed attempts are counted against for an account."""
+        return f"user:{user_pk}"
+
+    def _matching_user_ids(self, identifier: str) -> list[int]:
+        """
+        Return the accounts whose username or email matches the login text.
+
+        Text with a NUL character can't match any account, and PostgreSQL
+        rejects it in a query, so it is never looked up.
+        """
+        if not identifier or "\x00" in identifier:
+            return []
+        return list(
+            get_user_model()
+            ._default_manager.filter(
+                Q(username__iexact=identifier) | Q(email__iexact=identifier)
+            )
+            .order_by("pk")
+            .values_list("pk", flat=True)
+        )
 
     def _lock_subjects(self, login_identifier: str) -> list[str]:
         """
@@ -267,15 +291,9 @@ class CustomLoginView(LoginView):
             list of subject strings, one per matching account
         """
         identifier = login_identifier.strip()
-        user_ids = (
-            get_user_model()
-            ._default_manager.filter(
-                Q(username__iexact=identifier) | Q(email__iexact=identifier)
-            )
-            .order_by("pk")
-            .values_list("pk", flat=True)
-        )
-        subjects = [f"user:{pk}" for pk in user_ids]
+        subjects = [
+            self._account_subject(pk) for pk in self._matching_user_ids(identifier)
+        ]
         return subjects or [f"login:{identifier.casefold()}"]
 
     @staticmethod
@@ -306,14 +324,15 @@ class CustomLoginView(LoginView):
         """
         return self._cache_key(CACHE_KEY_LOCK_EXPIRY, subject)
 
-    def _lock_expiry(self, subjects: list[str]):
-        """Return the latest lock expiry still in force for ``subjects``."""
+    def _active_locks(self, subjects: list[str]) -> dict[str, float]:
+        """Return the lock expiry still in force for each locked subject."""
         now = time.time()
-        expiries = [
-            cache.get(self._get_lock_expiry_key(subject)) for subject in subjects
-        ]
-        active = [ts for ts in expiries if ts and ts > now]
-        return max(active) if active else None
+        locks = {}
+        for subject in subjects:
+            expiry = cache.get(self._get_lock_expiry_key(subject))
+            if expiry and expiry > now:
+                locks[subject] = expiry
+        return locks
 
     def dispatch(self, request, *args, **kwargs):
         """
@@ -323,11 +342,23 @@ class CustomLoginView(LoginView):
         """
         self.lock_expiry_timestamp = None
         self.locked_identifier = None
+        self.locked_subjects = set()
         if request.method == "POST":
             raw_username = request.POST.get("username", "").strip()
-            stored_lock_ts = self._lock_expiry(self._lock_subjects(raw_username))
-            if stored_lock_ts:
-                self.lock_expiry_timestamp = stored_lock_ts
+            subjects = self._lock_subjects(raw_username)
+            locks = self._active_locks(subjects)
+            # One login can match a username and another user's email. If
+            # only some of those accounts are locked, the others can still
+            # log in: the locked ones are left out of the password check
+            # (see EmailOrUsernameBackend), so they reveal nothing.
+            self.locked_subjects = set(locks)
+            request.login_locked_user_ids = {
+                pk
+                for pk in self._matching_user_ids(raw_username)
+                if self._account_subject(pk) in self.locked_subjects
+            }
+            if locks and len(locks) == len(subjects):
+                self.lock_expiry_timestamp = max(locks.values())
                 self.locked_identifier = raw_username
                 context = self.get_context_data()
                 context["form"] = self.get_form()
@@ -353,11 +384,11 @@ class CustomLoginView(LoginView):
         Clear failed attempt counter and lock record from cache.
         Set sliding session timeout for 48 hours.
         """
-        # Clear failed attempts and locks for every spelling of this account
-        username_input = form.cleaned_data.get("username", "").strip()
-        for subject in self._lock_subjects(username_input):
-            cache.delete(self._get_attempt_key(subject))
-            cache.delete(self._get_lock_expiry_key(subject))
+        # Clear failed attempts and locks for the account that logged in only.
+        # Another account matching the same text keeps its own count.
+        subject = self._account_subject(form.get_user().pk)
+        cache.delete(self._get_attempt_key(subject))
+        cache.delete(self._get_lock_expiry_key(subject))
 
         # 48h sliding session expiry
         self.request.session.set_expiry(SESSION_LIFESPAN_SECONDS)
@@ -382,6 +413,9 @@ class CustomLoginView(LoginView):
 
         current_attempts = 0
         for subject in self._lock_subjects(username_input):
+            if subject in self.locked_subjects:
+                # Already locked and left out of the password check.
+                continue
             attempt_key = self._get_attempt_key(subject)
             attempts = cache.get(attempt_key, 0) + 1
             cache.set(attempt_key, attempts, LOCKOUT_DURATION_SECONDS)

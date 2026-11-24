@@ -17,7 +17,9 @@ class EmailOrUsernameBackend(ModelBackend):
 
     Both are matched regardless of case. Usernames may contain "@", so one
     login can match a username and a different user's email address; each
-    match is checked against the password in turn.
+    match is checked against the password in turn. Accounts the login page
+    has locked after too many failures are skipped, so they can't be
+    guessed at while another account matching the same text logs in.
     """
 
     def authenticate(self, request, username=None, password=None, **kwargs):
@@ -36,7 +38,7 @@ class EmailOrUsernameBackend(ModelBackend):
             return None
         users = User._default_manager.filter(
             Q(username__iexact=username) | Q(email__iexact=username)
-        )
+        ).exclude(pk__in=getattr(request, "login_locked_user_ids", ()))
         for user in users:
             if user.check_password(password) and self.user_can_authenticate(user):
                 return user
