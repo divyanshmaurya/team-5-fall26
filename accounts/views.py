@@ -52,6 +52,10 @@ class AccountSettingsView(LoginRequiredMixin, SuccessMessageMixin, UpdateView):
         return context
 
 
+# Interested events shown on a public profile before "Show all".
+INTERESTED_EVENTS_PREVIEW_LIMIT = 3
+
+
 @method_decorator(never_cache, name="dispatch")
 class PublicProfileView(LoginRequiredMixin, DetailView):
     """Display a lightweight community profile."""
@@ -102,8 +106,9 @@ class PublicProfileView(LoginRequiredMixin, DetailView):
             context["host_rating"] = host_rating_summary(profile_user)
             context["host_comments"] = latest_host_comments(profile_user)
 
-        # Upcoming events the member marked as Interested.
-        context["upcoming_events"] = (
+        # Upcoming events the member marked as Interested. Only the
+        # soonest few show until the viewer asks for the full list.
+        upcoming_events = list(
             Event.objects.filter(
                 interests__user=profile_user,
                 status=Event.Status.UPCOMING,
@@ -111,6 +116,17 @@ class PublicProfileView(LoginRequiredMixin, DetailView):
             )
             .distinct()
             .order_by("start_time", "title")
+        )
+        show_all = self.request.GET.get("interested") == "all"
+        context["upcoming_events"] = upcoming_events
+        context["shown_upcoming_events"] = (
+            upcoming_events
+            if show_all
+            else upcoming_events[:INTERESTED_EVENTS_PREVIEW_LIMIT]
+        )
+        context["show_all_upcoming_events"] = show_all
+        context["has_more_upcoming_events"] = (
+            len(upcoming_events) > INTERESTED_EVENTS_PREVIEW_LIMIT
         )
 
         # Derive interests from categories of events the member is
