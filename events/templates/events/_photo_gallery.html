@@ -1,4 +1,4 @@
-{% load tz %}
+{% load static tz %}
 <section class="photo-gallery" id="photos" aria-labelledby="photos-heading">
     <div class="photo-gallery-heading">
         <div>
@@ -30,4 +30,12 @@
             {% if photo_next_url %}<a href="{{ photo_next_url }}">Next pictures</a>{% endif %}
         </nav>
     {% endif %}
+    <dialog class="photo-lightbox" data-photo-lightbox-dialog aria-label="Picture viewer">
+        <div class="photo-lightbox-frame">
+            <button class="photo-lightbox-close" type="button" data-photo-lightbox-close aria-label="Close picture">&times;</button>
+            <img class="photo-lightbox-image" data-photo-lightbox-image alt="">
+            <p class="photo-lightbox-caption" data-photo-lightbox-caption></p>
+        </div>
+    </dialog>
+    <script src="{% static 'events/photo-lightbox.js' %}" defer></script>
 </section>
