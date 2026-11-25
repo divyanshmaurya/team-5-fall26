@@ -295,6 +295,32 @@ class ClosedEventActivityTests(CommunityViewTestBase):
                 self.assertFalse(EventReply.objects.exists())
                 self.assertFalse(ContactRequest.objects.exists())
 
+    def test_discussion_stays_open_while_event_is_underway(self):
+        """A past start time must not close discussions before the end time."""
+        now = timezone.now()
+        self.event.start_time = now - timedelta(hours=1)
+        self.event.end_time = now + timedelta(hours=1)
+        self.event.save(update_fields=["start_time", "end_time"])
+
+        post_response = self.client.post(
+            reverse("create_event_post", args=[self.event.pk]),
+            {"body": "Enjoying this event!"},
+        )
+        self.assertRedirects(post_response, self.detail_url())
+        post = EventPost.objects.get()
+        self.assertEqual(post.body, "Enjoying this event!")
+        self.assertEqual(post.author, self.alice)
+
+        reply_response = self.client.post(
+            reverse("create_event_reply", args=[post.pk]),
+            {"body": "Thanks for sharing!"},
+        )
+        self.assertRedirects(reply_response, self.detail_url())
+        reply = EventReply.objects.get()
+        self.assertEqual(reply.body, "Thanks for sharing!")
+        self.assertEqual(reply.author, self.alice)
+        self.assertEqual(reply.post, post)
+
     def test_existing_interest_cannot_be_toggled_after_actual_end(self):
         EventInterest.objects.create(event=self.event, user=self.alice)
         self.event.end_time = timezone.now() - timedelta(minutes=1)
