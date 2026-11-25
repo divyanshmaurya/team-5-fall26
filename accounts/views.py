@@ -14,7 +14,6 @@ from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import render, resolve_url
 from django.urls import reverse_lazy
-from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
@@ -106,27 +105,35 @@ class PublicProfileView(LoginRequiredMixin, DetailView):
             context["host_rating"] = host_rating_summary(profile_user)
             context["host_comments"] = latest_host_comments(profile_user)
 
-        # Upcoming events the member marked as Interested. Only the
-        # soonest few show until the viewer asks for the full list.
-        upcoming_events = list(
-            Event.objects.filter(
-                interests__user=profile_user,
-                status=Event.Status.UPCOMING,
-                start_time__gte=timezone.now(),
-            )
-            .distinct()
-            .order_by("start_time", "title")
+        # Upcoming events the member marked as Interested, by the same rule
+        # as the home page. Only the soonest few show until the viewer asks
+        # for the full list.
+        upcoming_events = Event.objects.upcoming().filter(
+            pk__in=EventInterest.objects.filter(user=profile_user).values("event")
         )
         show_all = self.request.GET.get("interested") == "all"
-        context["upcoming_events"] = upcoming_events
-        context["shown_upcoming_events"] = (
-            upcoming_events
-            if show_all
-            else upcoming_events[:INTERESTED_EVENTS_PREVIEW_LIMIT]
-        )
+        if show_all:
+            shown_events = list(upcoming_events)
+            event_count = len(shown_events)
+        else:
+            shown_events = upcoming_events[:INTERESTED_EVENTS_PREVIEW_LIMIT]
+            event_count = upcoming_events.count()
+        context["shown_upcoming_events"] = shown_events
+        context["upcoming_event_count"] = event_count
         context["show_all_upcoming_events"] = show_all
         context["has_more_upcoming_events"] = (
-            len(upcoming_events) > INTERESTED_EVENTS_PREVIEW_LIMIT
+            event_count > INTERESTED_EVENTS_PREVIEW_LIMIT
+        )
+        # Toggle links keep the rest of the page state (such as from_event
+        # and photo_page) and change only the interested list.
+        params = self.request.GET.copy()
+        if show_all:
+            params.pop("interested", None)
+        else:
+            params["interested"] = "all"
+        query = f"?{params.urlencode()}" if params else ""
+        context["interested_toggle_url"] = (
+            f"{self.request.path}{query}#interested-events"
         )
 
         # Derive interests from categories of events the member is

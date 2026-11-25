@@ -492,9 +492,9 @@
             <section class="profile-section" id="interested-events">
                 <div class="profile-section-header">
                     <h2>Interested Events</h2>
-                    {% if upcoming_events %}
+                    {% if upcoming_event_count %}
                         <span class="section-count">
-                            {{ upcoming_events|length }} event{{ upcoming_events|length|pluralize }}
+                            {{ upcoming_event_count }} event{{ upcoming_event_count|pluralize }}
                         </span>
                     {% endif %}
                 </div>
@@ -503,7 +503,7 @@
                     Upcoming events this member has marked as Interested.
                 </p>
 
-                {% if upcoming_events %}
+                {% if upcoming_event_count %}
                     <ul class="profile-event-list">
                         {% for event in shown_upcoming_events %}
                             <li class="profile-event">
@@ -526,9 +526,9 @@
                     {% if has_more_upcoming_events %}
                         <p class="profile-event-more">
                             {% if show_all_upcoming_events %}
-                                <a href="{% url 'public_profile' profile_user.username %}#interested-events">Show fewer events</a>
+                                <a href="{{ interested_toggle_url }}">Show fewer events</a>
                             {% else %}
-                                <a href="{% url 'public_profile' profile_user.username %}?interested=all#interested-events">Show all {{ upcoming_events|length }} interested events</a>
+                                <a href="{{ interested_toggle_url }}">Show all {{ upcoming_event_count }} interested events</a>
                             {% endif %}
                         </p>
                     {% endif %}
