@@ -56,17 +56,18 @@ class HomeWithoutWeekendSectionTests(TestCase):
         self.assertEqual(positions, sorted(positions))
 
     def test_signed_out_home_has_no_weekend_list(self):
-        """Visitors see the search bar, then the sign-up card, and no event list."""
+        """Visitors see the search bar, the sign-up card, then upcoming events."""
         response = self.client.get(reverse("landing"))
 
         self.assertEqual(response.status_code, 200)
         self.assert_no_weekend_section(response)
-        self.assertNotContains(response, "Soon Kayaking")
+        self.assertContains(response, "Soon Kayaking")
         self.assert_in_order(
             response,
             'class="headline"',
             'action="/search"',
             'class="join-card"',
+            'id="events-heading"',
             'class="site-footer"',
         )
 
@@ -143,19 +144,21 @@ class LandingViewTests(TestCase):
         )
 
     def test_anonymous_visitors_see_the_sign_up_prompt(self):
-        """Logged-out visitors get a sign-up prompt but no personal sections."""
+        """Logged-out visitors get a sign-up prompt and upcoming events, but no
+        personal sections (#205)."""
         response = self.client.get(reverse("landing"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Log in or sign up")
         self.assertContains(response, f'href="{reverse("register")}"')
         self.assertContains(response, f'href="{reverse("login")}"')
-        self.assertNotContains(response, "Alpha Yoga")
+        self.assertContains(response, "Alpha Yoga")
+        self.assertContains(response, 'id="events-heading"')
         # Match the section headings: the site footer links to Archived events.
-        self.assertNotContains(response, 'id="events-heading"')
         self.assertNotContains(response, "Personal plans")
+        self.assertNotContains(response, 'id="recommendations-heading"')
         self.assertNotContains(response, 'id="archived-heading"')
-        self.assertEqual(list(response.context["events"]), [])
+        self.assertIn("Alpha Yoga", [e.title for e in response.context["events"]])
         self.assertEqual(list(response.context["archived_events"]), [])
 
     def test_signed_in_visitors_see_upcoming_events_in_order(self):

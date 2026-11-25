@@ -229,7 +229,8 @@ class SearchViewTests(TestCase):
                 self.assertContains(response, '<button type="submit">Search</button>')
                 if not signed_in:
                     self.assertContains(response, "Log in or sign up")
-                    self.assertNotContains(response, self.yoga.title)
+                    # Visitors see upcoming events too (#205).
+                    self.assertContains(response, self.yoga.title)
 
     def test_missing_or_whitespace_queries_show_a_prompt(self):
         """Opening search without keywords never lists every event."""
