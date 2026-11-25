@@ -34,6 +34,11 @@
         <div class="photo-lightbox-frame">
             <button class="photo-lightbox-close" type="button" data-photo-lightbox-close aria-label="Close picture">&times;</button>
             <img class="photo-lightbox-image" data-photo-lightbox-image alt="">
+            <div class="photo-lightbox-error" data-photo-lightbox-error role="alert" hidden>
+                <p><strong>Picture temporarily unavailable.</strong></p>
+                <p>Please try loading this picture again in a moment.</p>
+                <a class="photo-button" href="" data-photo-lightbox-retry>Try again</a>
+            </div>
             <p class="photo-lightbox-caption" data-photo-lightbox-caption></p>
         </div>
     </dialog>

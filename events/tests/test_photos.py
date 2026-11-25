@@ -753,6 +753,11 @@ class PhotoViewerTests(PhotoTestCase):
                 self.assertContains(response, 'aria-label="Close picture"')
                 self.assertContains(response, "events/photo-lightbox.js")
                 self.assertContains(
+                    response, 'data-photo-lightbox-error role="alert" hidden'
+                )
+                self.assertContains(response, "Picture temporarily unavailable.")
+                self.assertContains(response, "data-photo-lightbox-retry>Try again</a>")
+                self.assertContains(
                     response,
                     f'class="photo-image-link" href="{image_url}" data-photo-lightbox',
                 )
