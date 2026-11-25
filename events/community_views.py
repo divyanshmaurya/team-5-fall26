@@ -41,7 +41,7 @@ def get_open_event(event_id):
     """Return an event that still accepts interest and contact interactions."""
     event = get_object_or_404(Event, pk=event_id)
 
-    if event.status != Event.Status.UPCOMING:
+    if not event.is_open or event.is_cancelled:
         return None
 
     return event
@@ -111,10 +111,10 @@ def toggle_event_interest(request, event_id):
 @login_required
 @require_POST
 def create_event_post(request, event_id):
-    """Create a discussion post only when the event is upcoming."""
-    event = get_object_or_404(Event, pk=event_id)
+    """Create a discussion post only while the event is still open."""
+    event = get_open_event(event_id)
 
-    if event.status != Event.Status.UPCOMING:
+    if event is None:
         messages.error(request, CLOSED_EVENT)
         return redirect(event_detail_url(event_id))
 
@@ -138,13 +138,13 @@ def create_event_post(request, event_id):
 @login_required
 @require_POST
 def create_event_reply(request, post_id):
-    """Reply to a post only when its event is upcoming."""
+    """Reply to a post only while its event is still open."""
     post = get_object_or_404(
         EventPost.objects.select_related("event", "author"),
         pk=post_id,
     )
 
-    if post.event.status != Event.Status.UPCOMING:
+    if not post.event.is_open or post.event.is_cancelled:
         messages.error(request, CLOSED_EVENT)
         return redirect(event_detail_url(post.event_id))
 
