@@ -914,9 +914,10 @@ class AboutView(TemplateView):
 class LandingView(TemplateView):
     """Render the home page.
 
-    Signed-in visitors get their personal sections: recommendations, upcoming
-    events with registration badges, and archived events. Signed-out visitors
-    get a prompt to log in or sign up.
+    Everyone sees upcoming events. Signed-in visitors also get their personal
+    sections: recommendations, registration badges on the cards, and archived
+    events. Signed-out visitors get a prompt to log in or sign up above the
+    upcoming events.
     """
 
     template_name = "events/home.html"
@@ -928,7 +929,8 @@ class LandingView(TemplateView):
         return annotate_for_viewer(events, self.request.user)
 
     def get_context_data(self, **kwargs):
-        """Add the search filters and, when signed in, the personal lists."""
+        """Add the search filters, upcoming events and, when signed in, the
+        personal lists (recommendations and archived events)."""
         context = super().get_context_data(**kwargs)
         context["filter_form"] = EventFilterForm()
         upcoming = Event.objects.upcoming()
@@ -947,13 +949,13 @@ class LandingView(TemplateView):
             ).exists()
             context["recommendations"] = recommended_events(self.request.user)
 
-            # Upcoming events, soonest first.
-            context["events"] = self.with_registration(
-                upcoming.exclude(
-                    pk__in=[event.pk for event in context["recommendations"]]
-                )
-            )[:UPCOMING_EVENT_LIMIT]
+        # Upcoming events, soonest first, for everyone (#205). Signed-in
+        # visitors don't see their recommendations twice.
+        context["events"] = self.with_registration(
+            upcoming.exclude(pk__in=[event.pk for event in context["recommendations"]])
+        )[:UPCOMING_EVENT_LIMIT]
 
+        if self.request.user.is_authenticated:
             # Recently completed events, newest first.
             archived = self.with_registration(
                 Event.objects.listed().filter(status=Event.Status.DONE)
