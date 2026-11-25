@@ -1,5 +1,5 @@
 <article class="photo-card">
-    <a class="photo-image-link" href="{% url 'event_photo_image' photo.pk %}" aria-label="View picture from {{ photo.event.title }} by {{ photo.uploader.get_display_name }}">
+    <a class="photo-image-link" href="{% url 'event_photo_image' photo.pk %}" data-photo-lightbox data-photo-alt="Picture from {{ photo.event.title }}, uploaded by {{ photo.uploader.get_display_name }}" data-photo-caption="Picture from {{ photo.event.title }} by {{ photo.uploader.get_display_name }}" aria-label="View picture from {{ photo.event.title }} by {{ photo.uploader.get_display_name }}">
         <img src="{% url 'event_photo_image' photo.pk %}" alt="Picture from {{ photo.event.title }}, uploaded by {{ photo.uploader.get_display_name }}" loading="lazy" decoding="async" width="600" height="450">
     </a>
     <div class="photo-card-body">

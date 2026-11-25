@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from PIL import Image
 from django.conf import settings
+from django.contrib.staticfiles import finders
 from django.core.exceptions import (
     ImproperlyConfigured,
     PermissionDenied,
@@ -736,3 +737,40 @@ class StorageConfigurationTests(SimpleTestCase):
             with self.assertRaises(FileNotFoundError):
                 storage.open("missing.jpg")
             aws.assert_no_pending_responses()
+
+
+class PhotoViewerTests(PhotoTestCase):
+    """Pictures open in a dismissible viewer rather than a full-page image."""
+
+    def test_gallery_pages_open_pictures_in_a_dismissible_viewer(self):
+        photo = self.saved_photo(visibility="public")
+        image_url = reverse("event_photo_image", args=[photo.pk])
+        for url in (self.event_url, self.profile_url):
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertContains(response, "data-photo-lightbox-dialog", count=1)
+                self.assertContains(response, "data-photo-lightbox-close")
+                self.assertContains(response, 'aria-label="Close picture"')
+                self.assertContains(response, "events/photo-lightbox.js")
+                self.assertContains(
+                    response, 'data-photo-lightbox-error role="alert" hidden'
+                )
+                self.assertContains(response, "Picture temporarily unavailable.")
+                self.assertContains(response, "data-photo-lightbox-retry>Try again</a>")
+                self.assertContains(
+                    response,
+                    f'class="photo-image-link" href="{image_url}" data-photo-lightbox',
+                )
+                self.assertContains(
+                    response,
+                    'data-photo-caption="Picture from Park Walk by photographer"',
+                )
+
+    def test_viewer_is_sized_to_the_window_and_dims_the_page(self):
+        with open(finders.find("events/photos.css"), encoding="utf-8") as css:
+            styles = css.read()
+        self.assertIn(".photo-lightbox::backdrop", styles)
+        self.assertIn("max-width: 90vw;", styles)
+        self.assertIn("max-height: 90vh;", styles)
+        self.assertIn("max-height: 75vh;", styles)
+        self.assertIn("object-fit: contain;", styles)
