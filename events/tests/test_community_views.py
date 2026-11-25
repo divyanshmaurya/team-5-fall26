@@ -1,12 +1,13 @@
 """Tests for event interests, discussions, and contact requests."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from accounts.models import ContactPermission
 from events.models import (
@@ -221,6 +222,93 @@ class EventDiscussionViewTests(CommunityViewTestBase):
         self.assertEqual(
             [str(message) for message in get_messages(response.wsgi_request)],
             [CLOSED_EVENT_MESSAGE],
+        )
+
+
+class ClosedEventActivityTests(CommunityViewTestBase):
+    """A stale upcoming status never reopens a finished or cancelled event."""
+
+    def test_closed_events_reject_interest_posts_replies_and_contact(self):
+        old_post = EventPost.objects.create(
+            event=self.event, author=self.bob, body="An existing discussion."
+        )
+        scenarios = (
+            (
+                "ended-by-end-time",
+                "Community Yoga",
+                timezone.now() - timedelta(hours=4),
+                timezone.now() - timedelta(hours=2),
+            ),
+            (
+                "ended-without-end-time",
+                "Community Yoga",
+                timezone.now() - timedelta(days=3),
+                None,
+            ),
+            (
+                "cancelled-in-feed-title",
+                "CANCELED Community Yoga",
+                timezone.now() + timedelta(days=3),
+                None,
+            ),
+        )
+        for label, title, start, end in scenarios:
+            with self.subTest(scenario=label):
+                self.event.title = title
+                self.event.start_time = start
+                self.event.end_time = end
+                self.event.status = Event.Status.UPCOMING
+                self.event.save(
+                    update_fields=["title", "start_time", "end_time", "status"]
+                )
+                self.assertEqual(self.event.status, Event.Status.UPCOMING)
+                actions = (
+                    (reverse("toggle_event_interest", args=[self.event.pk]), {}),
+                    (
+                        reverse("create_event_post", args=[self.event.pk]),
+                        {"body": "A new comment"},
+                    ),
+                    (
+                        reverse("create_event_reply", args=[old_post.pk]),
+                        {"body": "A new reply"},
+                    ),
+                    (
+                        reverse(
+                            "send_contact_request",
+                            args=[self.event.pk, self.bob.pk],
+                        ),
+                        {"message": "Hello"},
+                    ),
+                )
+                for url, data in actions:
+                    response = self.client.post(url, data)
+                    self.assertRedirects(response, self.detail_url())
+                    self.assertEqual(
+                        [
+                            str(message)
+                            for message in get_messages(response.wsgi_request)
+                        ],
+                        [CLOSED_EVENT_MESSAGE],
+                    )
+                self.assertFalse(EventInterest.objects.exists())
+                self.assertEqual(EventPost.objects.count(), 1)
+                self.assertFalse(EventReply.objects.exists())
+                self.assertFalse(ContactRequest.objects.exists())
+
+    def test_existing_interest_cannot_be_toggled_after_actual_end(self):
+        EventInterest.objects.create(event=self.event, user=self.alice)
+        self.event.end_time = timezone.now() - timedelta(minutes=1)
+        self.event.start_time = timezone.now() - timedelta(hours=2)
+        self.event.save(update_fields=["end_time", "start_time"])
+
+        response = self.client.post(
+            reverse("toggle_event_interest", args=[self.event.pk])
+        )
+        self.assertRedirects(response, self.detail_url())
+        self.assertTrue(
+            EventInterest.objects.filter(
+                event=self.event, user=self.alice
+            ).exists()
         )
 
 
