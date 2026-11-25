@@ -1,6 +1,7 @@
 """Tests for the chat endpoints and the widget."""
 
 import json
+import time
 from unittest import mock
 
 from django.contrib.admin.sites import AdminSite
@@ -156,10 +157,27 @@ class ChatMessageTests(ChatTestCase):
                 )
         self.assertEqual((first.status_code, second.status_code), (200, 429))
 
-    def test_rate_limit_survives_expired_counters(self):
-        with mock.patch("chatbot.views.cache.incr", side_effect=ValueError):
-            with mock.patch(GENERATE, return_value=text_response("Hi")):
-                self.assertEqual(self.post_message("Hi").status_code, 200)
+    def test_rate_limit_window_lasts_one_minute(self):
+        """Rejected requests don't stretch the window; it ends a minute in."""
+        # Start from the real clock: the database cache times its own expiry
+        # with time.time() too.
+        start = time.time()
+        with mock.patch(GENERATE, return_value=text_response("Hi")):
+            with mock.patch("chatbot.views.time.time", return_value=start):
+                statuses = [self.post_message("Hi").status_code for _ in range(16)]
+            with mock.patch("chatbot.views.time.time", return_value=start + 59):
+                statuses.append(self.post_message("Hi").status_code)
+            with mock.patch("chatbot.views.time.time", return_value=start + 61):
+                statuses.append(self.post_message("Hi").status_code)
+        self.assertEqual(statuses[-3:], [429, 429, 200])
+
+    def test_rate_limit_resets_counters_in_an_older_format(self):
+        """A plain number left in the cache by older code starts a new window."""
+        user = make_user("returning")
+        self.client.force_login(user)
+        cache.set(f"chatbot-rate:user:{user.pk}", 99, 60)
+        with mock.patch(GENERATE, return_value=text_response("Hi")):
+            self.assertEqual(self.post_message("Hi").status_code, 200)
 
     def test_signed_in_users_are_rate_limited_by_account(self):
         user = make_user("chatty")

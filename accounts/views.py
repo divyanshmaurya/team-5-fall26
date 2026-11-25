@@ -1,5 +1,6 @@
 """Views for user account pages."""
 
+import hashlib
 import time
 from urllib.parse import urlencode
 from django.conf import settings
@@ -246,28 +247,88 @@ class CustomLoginView(LoginView):
         super().__init__(*args, **kwargs)
         self.lock_expiry_timestamp = None
         self.locked_identifier = None
+        self.locked_subjects = set()
 
-    def _get_attempt_key(self, login_identifier: str) -> str:
+    @staticmethod
+    def _account_subject(user_pk) -> str:
+        """Return the subject failed attempts are counted against for an account."""
+        return f"user:{user_pk}"
+
+    def _matching_user_ids(self, identifier: str) -> list[int]:
+        """
+        Return the accounts whose username or email matches the login text.
+
+        Text with a NUL character can't match any account, and PostgreSQL
+        rejects it in a query, so it is never looked up.
+        """
+        if not identifier or "\x00" in identifier:
+            return []
+        return list(
+            get_user_model()
+            ._default_manager.filter(
+                Q(username__iexact=identifier) | Q(email__iexact=identifier)
+            )
+            .order_by("pk")
+            .values_list("pk", flat=True)
+        )
+
+    def _lock_subjects(self, login_identifier: str) -> list[str]:
+        """
+        Return what failed attempts are counted against for this login text.
+
+        Login matches usernames and emails regardless of case, so attempts
+        are counted per matching account. Typing "Alice", "alice" or the
+        account's email all share one counter (#180). Text that matches no
+        account is counted by its lowercased form.
+
+        Args:
+            login_identifier: username or email entered in login form
+        Returns:
+            list of subject strings, one per matching account
+        """
+        identifier = login_identifier.strip()
+        subjects = [
+            self._account_subject(pk) for pk in self._matching_user_ids(identifier)
+        ]
+        return subjects or [f"login:{identifier.casefold()}"]
+
+    @staticmethod
+    def _cache_key(prefix: str, subject: str) -> str:
+        """Build a fixed-length cache key, so any typed text is safe to use."""
+        digest = hashlib.sha256(subject.encode()).hexdigest()
+        return f"{prefix}{digest}"
+
+    def _get_attempt_key(self, subject: str) -> str:
         """
         Generate cache key for counting failed login attempts.
 
         Args:
-            login_identifier: username or email entered in login form
+            subject: an account or login text from ``_lock_subjects``
         Returns:
             prefixed cache key string
         """
-        return f"{CACHE_KEY_ATTEMPTS}{login_identifier}"
+        return self._cache_key(CACHE_KEY_ATTEMPTS, subject)
 
-    def _get_lock_expiry_key(self, login_identifier: str) -> str:
+    def _get_lock_expiry_key(self, subject: str) -> str:
         """
         Generate cache key that stores the absolute lock expiry timestamp.
 
         Args:
-            login_identifier: username or email entered in login form
+            subject: an account or login text from ``_lock_subjects``
         Returns:
             prefixed cache key string
         """
-        return f"{CACHE_KEY_LOCK_EXPIRY}{login_identifier}"
+        return self._cache_key(CACHE_KEY_LOCK_EXPIRY, subject)
+
+    def _active_locks(self, subjects: list[str]) -> dict[str, float]:
+        """Return the lock expiry still in force for each locked subject."""
+        now = time.time()
+        locks = {}
+        for subject in subjects:
+            expiry = cache.get(self._get_lock_expiry_key(subject))
+            if expiry and expiry > now:
+                locks[subject] = expiry
+        return locks
 
     def dispatch(self, request, *args, **kwargs):
         """
@@ -277,14 +338,24 @@ class CustomLoginView(LoginView):
         """
         self.lock_expiry_timestamp = None
         self.locked_identifier = None
+        self.locked_subjects = set()
         if request.method == "POST":
             raw_username = request.POST.get("username", "").strip()
-            lock_expiry_key = self._get_lock_expiry_key(raw_username)
-            stored_lock_ts = cache.get(lock_expiry_key)
-
-            now = time.time()
-            if stored_lock_ts and stored_lock_ts > now:
-                self.lock_expiry_timestamp = stored_lock_ts
+            subjects = self._lock_subjects(raw_username)
+            locks = self._active_locks(subjects)
+            # One login can match a username and another user's email. If
+            # only some of those accounts are locked, the others can still
+            # log in: the locked ones are left out of the password check
+            # (see EmailOrUsernameBackend), so they reveal nothing.
+            self.locked_subjects = set(locks)
+            request.login_locked_user_ids = {
+                pk
+                for pk in self._matching_user_ids(raw_username)
+                if self._account_subject(pk) in self.locked_subjects
+            }
+            if locks and len(locks) == len(subjects):
+                # Reopen the form as soon as any matching account unlocks.
+                self.lock_expiry_timestamp = min(locks.values())
                 self.locked_identifier = raw_username
                 context = self.get_context_data()
                 context["form"] = self.get_form()
@@ -310,12 +381,11 @@ class CustomLoginView(LoginView):
         Clear failed attempt counter and lock record from cache.
         Set sliding session timeout for 48 hours.
         """
-        # Clear failed attempts and lock key for this identifier
-        username_input = form.cleaned_data.get("username", "").strip()
-        attempt_key = self._get_attempt_key(username_input)
-        lock_expiry_key = self._get_lock_expiry_key(username_input)
-        cache.delete(attempt_key)
-        cache.delete(lock_expiry_key)
+        # Clear failed attempts and locks for the account that logged in only.
+        # Another account matching the same text keeps its own count.
+        subject = self._account_subject(form.get_user().pk)
+        cache.delete(self._get_attempt_key(subject))
+        cache.delete(self._get_lock_expiry_key(subject))
 
         # 48h sliding session expiry
         self.request.session.set_expiry(SESSION_LIFESPAN_SECONDS)
@@ -338,23 +408,36 @@ class CustomLoginView(LoginView):
         if not username_input:
             username_input = self.request.POST.get("username", "").strip()
 
-        attempt_key = self._get_attempt_key(username_input)
-        lock_expiry_key = self._get_lock_expiry_key(username_input)
+        subjects = self._lock_subjects(username_input)
+        attempts_left = []
+        for subject in subjects:
+            if subject in self.locked_subjects:
+                # Already locked and left out of the password check.
+                continue
+            attempt_key = self._get_attempt_key(subject)
+            attempts = cache.get(attempt_key, 0) + 1
+            cache.set(attempt_key, attempts, LOCKOUT_DURATION_SECONDS)
+            if attempts >= LOCKOUT_THRESHOLD:
+                cache.set(
+                    self._get_lock_expiry_key(subject),
+                    time.time() + LOCKOUT_DURATION_SECONDS,
+                    LOCKOUT_DURATION_SECONDS,
+                )
+            else:
+                attempts_left.append(LOCKOUT_THRESHOLD - attempts)
 
-        current_attempts = cache.get(attempt_key, 0) + 1
-        cache.set(attempt_key, current_attempts, LOCKOUT_DURATION_SECONDS)
-
-        remaining_attempts = LOCKOUT_THRESHOLD - current_attempts
-
-        if current_attempts >= LOCKOUT_THRESHOLD:
-            lock_ts = time.time() + LOCKOUT_DURATION_SECONDS
-            cache.set(lock_expiry_key, lock_ts, LOCKOUT_DURATION_SECONDS)
-            self.lock_expiry_timestamp = lock_ts
+        # Lock the form only when no matching account can still log in, and
+        # reopen it as soon as the first of them can.
+        locks = self._active_locks(subjects)
+        if len(locks) == len(subjects):
+            self.lock_expiry_timestamp = min(locks.values())
             self.locked_identifier = username_input
             remaining_attempts = 0
         else:
             self.lock_expiry_timestamp = None
             self.locked_identifier = None
+            remaining_attempts = min(attempts_left, default=LOCKOUT_THRESHOLD)
+        current_attempts = LOCKOUT_THRESHOLD - remaining_attempts
 
         context = self.get_context_data(form=form)
         context["remaining_attempts"] = remaining_attempts
