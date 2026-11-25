@@ -35,6 +35,7 @@ class BanProfileTests(TestCase):
             guid="ban-profile-event",
             title="Weekend walk",
             start_time=timezone.now() + timedelta(days=30),
+            registration_url="https://example.com/register",
         )
         EventInterest.objects.create(user=cls.owner, event=cls.event)
         cls.profile_url = reverse("public_profile", args=[cls.owner.username])

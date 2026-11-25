@@ -933,12 +933,7 @@ class LandingView(TemplateView):
         personal lists (recommendations and archived events)."""
         context = super().get_context_data(**kwargs)
         context["filter_form"] = EventFilterForm()
-        upcoming = Event.objects.listed().filter(status=Event.Status.UPCOMING)
-        upcoming_order = (
-            F("start_time").asc(nulls_last=True),
-            "end_time",
-            "title",
-        )
+        upcoming = Event.objects.upcoming()
 
         context["events"] = []
         # Search lists nothing without a filter, so "all upcoming" starts today.
@@ -958,7 +953,7 @@ class LandingView(TemplateView):
         # visitors don't see their recommendations twice.
         context["events"] = self.with_registration(
             upcoming.exclude(pk__in=[event.pk for event in context["recommendations"]])
-        ).order_by(*upcoming_order)[:UPCOMING_EVENT_LIMIT]
+        )[:UPCOMING_EVENT_LIMIT]
 
         if self.request.user.is_authenticated:
             # Recently completed events, newest first.

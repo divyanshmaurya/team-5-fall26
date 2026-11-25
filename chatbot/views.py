@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import time
 from functools import wraps
 
@@ -67,14 +68,22 @@ def client_ip(request):
 
 
 def over_limit(key, limit):
-    """Count one request against ``key`` and return whether it is over."""
+    """Count one request against ``key`` and return whether it is over.
+
+    Each counter covers a fixed window that starts with its first request.
+    The window's end is stored next to the count, because the database
+    cache's ``incr()`` resets the expiry and would stretch the window on
+    every request, including rejected ones.
+    """
     key = f"chatbot-rate:{key}"
-    cache.add(key, 0, RATE_WINDOW_SECONDS)
-    try:
-        count = cache.incr(key)
-    except ValueError:  # Expired between add() and incr().
-        cache.set(key, 1, RATE_WINDOW_SECONDS)
-        count = 1
+    now = time.time()
+    stored = cache.get(key)
+    if isinstance(stored, tuple) and stored[1] > now:
+        count, window_ends = stored
+    else:
+        count, window_ends = 0, now + RATE_WINDOW_SECONDS
+    count += 1
+    cache.set(key, (count, window_ends), math.ceil(window_ends - now))
     return count > limit
 
 
