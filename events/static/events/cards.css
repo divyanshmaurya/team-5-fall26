@@ -146,6 +146,35 @@
     background: var(--leaf-dark);
 }
 
+/* Signed-out home cards: log in to register, mark Interested or favorite. */
+.visitor-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: auto;
+}
+
+.visitor-actions .register {
+    margin-top: 0;
+}
+
+.visitor-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0 16px;
+    margin: 0;
+    font-size: 0.88rem;
+}
+
+.visitor-links a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch);
+    color: var(--leaf-dark);
+    font-weight: 600;
+}
+
 /* A cancelled event keeps its slot but offers no registration link. */
 .register.is-cancelled,
 .register.is-cancelled:hover {

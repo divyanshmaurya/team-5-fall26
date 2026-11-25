@@ -92,7 +92,7 @@
             <ul class="event-grid">
                 {% for event in events %}
                 <li class="event">
-                    {% include 'events/_event_card_content.html' with link_to_source=True %}
+                    {% include 'events/_event_card_content.html' with link_to_source=True visitor_actions=True %}
                 </li>
                 {% endfor %}
             </ul>

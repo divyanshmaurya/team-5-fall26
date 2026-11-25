@@ -74,6 +74,26 @@
         </span>
         {% endif %}
 
+    {% elif visitor_actions and not user.is_authenticated and event.is_open %}
+        {# Signed-out visitors log in, then come back to this event (#205). #}
+        {% url 'event_detail' event.pk as event_url %}
+        <div class="visitor-actions">
+            <a class="register"
+               href="{% url 'login' %}?next={{ event_url|urlencode }}">
+                Log in to Register
+            </a>
+            <p class="visitor-links">
+                <a href="{% url 'login' %}?next={{ event_url|urlencode }}"
+                   aria-label="Log in to mark {{ event.title }} as Interested">
+                    Mark Interested
+                </a>
+                <a href="{% url 'login' %}?next={{ event_url|urlencode }}"
+                   aria-label="Log in to add {{ event.title }} to your favorites">
+                    Add to Favorites
+                </a>
+            </p>
+        </div>
+
     {% elif link_to_source and event.registration_url %}
         <a class="register"
            href="{{ event.registration_url }}"

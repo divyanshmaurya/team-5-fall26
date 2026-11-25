@@ -67,10 +67,25 @@ class VisitorUpcomingEventsTests(TestCase):
         self.assertNotContains(response, 'id="archived-heading"')
         self.assertNotContains(response, "Finished Cleanup")
 
-    def test_card_actions_send_visitors_to_log_in(self):
-        """A hosted event's card asks visitors to log in, then come back."""
+    def visitor_actions(self, html, event):
+        """Return the signed-out action block on ``event``'s home card."""
+        card = html[html.index(f'href="{reverse("event_detail", args=[event.pk])}"') :]
+        card = card[card.index('class="visitor-actions"') :]
+        return card[: card.index("</div>")]
+
+    def login_url_for(self, event):
+        """The login link that returns the visitor to ``event``."""
+        event_url = reverse("event_detail", args=[event.pk])
+        return f'href="{reverse("login")}?next={event_url}"'
+
+    def test_card_actions_send_visitors_to_log_in_and_back_to_the_event(self):
+        """Register, Interested and Favorite all log in, then open the event.
+
+        Covers both card types: a hosted event and a feed event that has its
+        own registration page.
+        """
         start = timezone.now() + timedelta(days=1)
-        Event.objects.create(
+        hosted = Event.objects.create(
             guid=Event.HOSTED_GUID_PREFIX + "visitor-hosted",
             title="Hosted Picnic",
             content_hash="",
@@ -79,14 +94,29 @@ class VisitorUpcomingEventsTests(TestCase):
             host=self.user,
         )
 
-        response = self.home()
+        html = self.home().content.decode()
 
-        self.assertContains(response, "Hosted Picnic")
-        html = response.content.decode()
-        button = html[: html.index("Log in to Register")]
-        button = button[button.rindex("<a") :]
-        self.assertIn(f'href="{reverse("login")}?next=/"', button)
-        self.assertNotContains(response, "You are registered for this event")
+        for event in (hosted, self.sooner):
+            with self.subTest(event=event.title):
+                actions = self.visitor_actions(html, event)
+                self.assertEqual(actions.count(self.login_url_for(event)), 3)
+                self.assertIn("Log in to Register", actions)
+                self.assertIn("Mark Interested", actions)
+                self.assertIn("Add to Favorites", actions)
+                self.assertNotIn("example.com/register", actions)
+        self.assertNotIn("External Register", html)
+        self.assertNotIn("You are registered for this event", html)
+
+    def test_ended_events_get_no_visitor_actions(self):
+        """Only open events offer the log-in actions."""
+        self.sooner.end_time = timezone.now() - timedelta(minutes=1)
+        self.sooner.start_time = self.sooner.end_time - timedelta(hours=2)
+        self.sooner.save()
+
+        html = self.home().content.decode()
+
+        self.assertEqual(html.count('class="visitor-actions"'), 1)
+        self.assertNotIn(self.login_url_for(self.sooner), html)
 
     def test_visitor_list_is_capped_like_the_signed_in_list(self):
         """At most the same number of upcoming events as for members."""
@@ -103,6 +133,7 @@ class VisitorUpcomingEventsTests(TestCase):
         response = self.home()
 
         self.assertNotContains(response, 'class="join-card"')
+        self.assertNotContains(response, 'class="visitor-actions"')
         self.assertContains(response, 'id="events-heading"')
         self.assertContains(response, 'id="archived-heading"')
         self.assertContains(response, "Finished Cleanup")
