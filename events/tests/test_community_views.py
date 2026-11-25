@@ -306,9 +306,7 @@ class ClosedEventActivityTests(CommunityViewTestBase):
         )
         self.assertRedirects(response, self.detail_url())
         self.assertTrue(
-            EventInterest.objects.filter(
-                event=self.event, user=self.alice
-            ).exists()
+            EventInterest.objects.filter(event=self.event, user=self.alice).exists()
         )
 
 
