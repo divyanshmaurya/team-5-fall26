@@ -341,6 +341,21 @@
             line-height: 1.6;
         }
 
+        .profile-event-more {
+            margin: 16px 0 0;
+            font-size: 14px;
+        }
+
+        .profile-event-more a {
+            color: #237b53;
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .profile-event-more a:hover {
+            text-decoration: underline;
+        }
+
         .profile-event-status {
             display: inline-flex;
             margin-top: 12px;
@@ -477,9 +492,9 @@
             <section class="profile-section" id="interested-events">
                 <div class="profile-section-header">
                     <h2>Interested Events</h2>
-                    {% if upcoming_events %}
+                    {% if upcoming_event_count %}
                         <span class="section-count">
-                            {{ upcoming_events|length }} event{{ upcoming_events|length|pluralize }}
+                            {{ upcoming_event_count }} event{{ upcoming_event_count|pluralize }}
                         </span>
                     {% endif %}
                 </div>
@@ -488,9 +503,9 @@
                     Upcoming events this member has marked as Interested.
                 </p>
 
-                {% if upcoming_events %}
+                {% if upcoming_event_count %}
                     <ul class="profile-event-list">
-                        {% for event in upcoming_events %}
+                        {% for event in shown_upcoming_events %}
                             <li class="profile-event">
                                 <a
                                     class="profile-event-title"
@@ -508,6 +523,15 @@
                             </li>
                         {% endfor %}
                     </ul>
+                    {% if has_more_upcoming_events %}
+                        <p class="profile-event-more">
+                            {% if show_all_upcoming_events %}
+                                <a href="{{ interested_toggle_url }}">Show fewer events</a>
+                            {% else %}
+                                <a href="{{ interested_toggle_url }}">Show all {{ upcoming_event_count }} interested events</a>
+                            {% endif %}
+                        </p>
+                    {% endif %}
                 {% else %}
                     <p class="profile-empty-state">
                         No upcoming events marked as Interested.

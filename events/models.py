@@ -5,7 +5,7 @@ from datetime import datetime, time, timedelta
 from django.contrib.postgres.indexes import GinIndex
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, F, OuterRef, Q
 from django.utils import timezone
 
 from .filters import CATEGORY_SLUGS, NYC_TIMEZONE, nyc_today
@@ -30,6 +30,18 @@ class EventQuerySet(models.QuerySet):
         posted on the platform always have a host and are always listed.
         """
         return self.filter(Q(host__isnull=False) | ~Q(registration_url=""))
+
+    def upcoming(self):
+        """Listed events still upcoming or under way, soonest first.
+
+        The hourly sync marks events done once they end, so an event that
+        has started but not finished still counts as upcoming here.
+        """
+        return (
+            self.listed()
+            .filter(status=Event.Status.UPCOMING)
+            .order_by(F("start_time").asc(nulls_last=True), "end_time", "title")
+        )
 
 
 class Event(models.Model):

@@ -931,12 +931,7 @@ class LandingView(TemplateView):
         """Add the search filters and, when signed in, the personal lists."""
         context = super().get_context_data(**kwargs)
         context["filter_form"] = EventFilterForm()
-        upcoming = Event.objects.listed().filter(status=Event.Status.UPCOMING)
-        upcoming_order = (
-            F("start_time").asc(nulls_last=True),
-            "end_time",
-            "title",
-        )
+        upcoming = Event.objects.upcoming()
 
         context["events"] = []
         # Search lists nothing without a filter, so "all upcoming" starts today.
@@ -957,7 +952,7 @@ class LandingView(TemplateView):
                 upcoming.exclude(
                     pk__in=[event.pk for event in context["recommendations"]]
                 )
-            ).order_by(*upcoming_order)[:UPCOMING_EVENT_LIMIT]
+            )[:UPCOMING_EVENT_LIMIT]
 
             # Recently completed events, newest first.
             archived = self.with_registration(
