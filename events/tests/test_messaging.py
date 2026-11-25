@@ -110,7 +110,10 @@ class MessagingViewTests(TestCase):
                     model = Registration if registered else EventInterest
                     model.objects.create(event=self.event, user=member)
 
-                self.assertContains(self.client.get(detail_url), f'action="{send_url}"')
+                # The event page links to the profile; messaging starts there.
+                detail = self.client.get(detail_url)
+                self.assertNotContains(detail, f'action="{send_url}"')
+                self.assertContains(detail, f'href="{profile_url}"')
                 self.assertContains(self.client.get(profile_url), "Send Message")
                 self.assertContains(self.client.get(message_url), "Community Walk")
 
